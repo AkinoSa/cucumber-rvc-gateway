@@ -1,0 +1,9 @@
+# 私有配置与运行时数据
+.env
+__pycache__/
+*.pyc
+*.bak*
+# 模型与运行数据(如在工作目录内)
+*.pth
+*.index
+gateway_work/

@@ -1,0 +1,71 @@
+# RVC 控制台网关（cucumber-rvc-gateway）
+# 部署：复制 .env.example 为 .env，按注释填写路径与端口后 `docker compose up -d --build`
+# 详见 README.md。所有宿主机路径通过 .env 提供，不写死任何特定机器的目录。
+services:
+  rvc-gateway:
+    build: .
+    image: cucumber-rvc-gateway:latest
+    container_name: cucumber-rvc-gateway
+    restart: unless-stopped
+    ports:
+      - "${RVC_GATEWAY_PORT:-3333}:7865"
+    cpus: "${RVC_CPU_LIMIT:-3}"
+    mem_limit: "${RVC_MEMORY_LIMIT:-8g}"
+    memswap_limit: "${RVC_MEMORY_SWAP_LIMIT:-12g}"
+    volumes:
+      # 模型目录：只读挂载（路径在 .env 配置）
+      - ${RVC_WEIGHTS_DIR:?请在 .env 设置 RVC_WEIGHTS_DIR}:/app/assets/weights:ro
+      - ${RVC_INDICES_DIR:?请在 .env 设置 RVC_INDICES_DIR}:/app/assets/indices:ro
+      - ${RVC_PYMSS_WEIGHTS_DIR:?请在 .env 设置 RVC_PYMSS_WEIGHTS_DIR}:/app/assets/pymss_weights:ro
+      - ${RVC_HUBERT_DIR:?请在 .env 设置 RVC_HUBERT_DIR}:/app/assets/hubert_base:ro
+      - ${RVC_RMVPE_DIR:?请在 .env 设置 RVC_RMVPE_DIR}:/app/assets/rmvpe:ro
+      # 任务工作区（cache/out/logs/tasks/tts/uploads），读写
+      - ${RVC_WORK_DIR:?请在 .env 设置 RVC_WORK_DIR}:/work:rw
+      # AstrBot 的 plugin_data 宿主机路径：插件把歌曲下到它的 temp_audio，
+      # 网关需要能读到（只读）。若 AstrBot 与网关不同机，请改为共享存储路径。
+      - ${RVC_PLUGIN_DATA_DIR:?请在 .env 设置 RVC_PLUGIN_DATA_DIR}:/mnt/plugin_data:ro
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # ---- 路径映射（容器内 ↔ 宿主机）----
+      GW_SYSTEM_PYTHON: /usr/local/bin/python
+      GW_APP_DIR: /app
+      GW_WEIGHTS_DIR: /app/assets/weights
+      GW_INDEX_DIR: /app/assets/indices
+      GW_PYMSS_MODEL_DIR: /app/assets/pymss_weights
+      GW_CONTAINER_WORK_DIR: /work
+      GW_HOST_WORK_DIR: ${RVC_WORK_DIR}
+      GW_CONTAINER_PLUGIN_DIR: /mnt/plugin_data
+      GW_HOST_PLUGIN_DIR: ${RVC_PLUGIN_DATA_DIR}
+      # ---- 分离模型 ----
+      GW_SEP_MODEL: ${RVC_SEP_MODEL:-3_HP-Vocal-UVR.pth}
+      # ---- 裁剪与资源 ----
+      GW_MAX_CLIP_SECONDS: "${RVC_MAX_CLIP_SECONDS:-30}"
+      GW_SEP_BUFFER_SECONDS: "5"
+      GW_DEFAULT_CLIP_SECONDS: "30"
+      GW_MAX_INPUT_SECONDS: "900"
+      GW_MAX_INPUT_BYTES: "83886080"
+      GW_DEFAULT_PITCH: "0"
+      GW_DEFAULT_F0: rmvpe
+      GW_DEFAULT_INDEX_RATE: "0.75"
+      GW_DEFAULT_PROTECT: "0.33"
+      GW_DEFAULT_RESAMPLE_SR: "0"
+      GW_DEFAULT_RMS_MIX_RATE: "1.0"
+      GW_DEFAULT_FORMAT: wav
+      GW_FFMPEG_TIMEOUT: "180"
+      GW_SEP_TIMEOUT: "1200"
+      GW_RVC_TIMEOUT: "1200"
+      GW_DOWNLOAD_TIMEOUT: "90"
+      GW_QUEUE_MAX: "4"
+      GW_OMP_THREADS: "${RVC_OMP_THREADS:-2}"
+      # ---- TTS / worker ----
+      GW_TTS_MAX_SECONDS: "60"
+      GW_TTS_TTL: "3600"
+      GW_WORKER_IDLE_SECONDS: "600"
+      GW_SLOT_WAIT: "180"
+      GW_NETEASE_BASE: ${RVC_NETEASE_BASE:-https://wyy.xhily.com}
+    healthcheck:
+      test: ["CMD", "/opt/gwvenv/bin/python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:7865/', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
