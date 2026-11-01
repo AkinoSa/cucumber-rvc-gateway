@@ -11,7 +11,7 @@
 
 </div>
 
-配套插件:**[astrbot_plugin_cucumber_rvc_console · RVC 控制台](https://github.com/<用户名>/astrbot_plugin_cucumber_rvc_console)**(聊天交互、任务调度、消息发送都在插件侧;网关只做推理)。
+配套插件:**[astrbot_plugin_cucumber_rvc_console · RVC 控制台](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)**(聊天交互、任务调度、消息发送都在插件侧;网关只做推理)。
 
 ## 架构
 
@@ -44,7 +44,7 @@ AstrBot 插件(宿主机进程)
 ## Docker Compose 部署(推荐)
 
 ```bash
-git clone https://github.com/<用户名>/cucumber-rvc-gateway.git
+git clone https://github.com/AkinoSa/cucumber-rvc-gateway.git
 cd cucumber-rvc-gateway
 cp .env.example .env
 # 编辑 .env:填模型目录、工作目录、AstrBot plugin_data 路径与端口
@@ -54,7 +54,7 @@ curl http://127.0.0.1:3333/   # 返回页面即启动成功
 
 ### 从源码构建(备用)
 
-`docker compose up -d --build` 本身就是从本目录源码构建;如需脱离 compose 手动构建:`docker build -t cucumber-rvc-gateway:latest .`。**GHCR 预构建镜像尚未发布**,发布后此处会更新为 `docker pull ghcr.io/<用户名>/cucumber-rvc-gateway`。
+`docker compose up -d --build` 本身就是从本目录源码构建;如需脱离 compose 手动构建:`docker build -t cucumber-rvc-gateway:latest .`。**GHCR 预构建镜像尚未发布**,发布后此处会更新为 `docker pull ghcr.io/AkinoSa/cucumber-rvc-gateway`。
 
 ## .env 配置说明
 
@@ -138,4 +138,4 @@ curl http://127.0.0.1:3333/   # 返回页面即启动成功
 
 - 本项目以 **AGPL-3.0** 发布(见 [LICENSE](LICENSE));配套插件同样为 AGPL-3.0;
 - 推理能力基于 [Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)(MIT)与 [PyMSS/MSST](https://github.com/SUC-DriverOld/MSST-WebUI) 系模型,均以子进程/挂载方式使用;
-- 插件项目:[astrbot_plugin_cucumber_rvc_console](https://github.com/<用户名>/astrbot_plugin_cucumber_rvc_console)。
+- 插件项目:[astrbot_plugin_cucumber_rvc_console](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)。

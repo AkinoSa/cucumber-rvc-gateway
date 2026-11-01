@@ -2,7 +2,7 @@
 
 ## 项目来源
 
-cucumber-rvc-gateway 是 [astrbot_plugin_cucumber_rvc_console(RVC 控制台)](https://github.com/<用户名>/astrbot_plugin_cucumber_rvc_console) 的配套推理网关,为 AstrBot AI 翻唱/TTS 语音回复提供音源处理、人声分离与 RVC 推理服务。
+cucumber-rvc-gateway 是 [astrbot_plugin_cucumber_rvc_console(RVC 控制台)](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console) 的配套推理网关,为 AstrBot AI 翻唱/TTS 语音回复提供音源处理、人声分离与 RVC 推理服务。
 
 ## 第三方组件
 
