@@ -1,17 +1,21 @@
 # RVC 控制台网关（cucumber-rvc-gateway）
-# 部署：复制 .env.example 为 .env，按注释填写路径与端口后 `docker compose up -d --build`
+#
+# 普通用户：直接 `docker compose pull && docker compose up -d`（从 GHCR 拉取预构建镜像）。
+# 进阶用户：取消 build: 注释，`docker compose up -d --build` 从源码自行构建。
+#
+# 部署：复制 .env.example 为 .env，按注释填写路径与端口。
 # 详见 README.md。所有宿主机路径通过 .env 提供，不写死任何特定机器的目录。
 services:
   rvc-gateway:
-    build: .
-    image: cucumber-rvc-gateway:latest
+    # 普通用户：使用 GHCR 预构建镜像
+    image: ghcr.io/akinosa/cucumber-rvc-gateway:1.0.0
+    # 进阶用户：从源码自行构建（取消下行注释，并注释上面的 image: 行）
+    # build: .
     container_name: cucumber-rvc-gateway
     restart: unless-stopped
     ports:
       - "${RVC_GATEWAY_PORT:-3333}:7865"
-    cpus: "${RVC_CPU_LIMIT:-3}"
-    mem_limit: "${RVC_MEMORY_LIMIT:-8g}"
-    memswap_limit: "${RVC_MEMORY_SWAP_LIMIT:-12g}"
+    mem_limit: "${MEM_LIMIT:-12g}"
     volumes:
       # 模型目录：只读挂载（路径在 .env 配置）
       - ${RVC_WEIGHTS_DIR:?请在 .env 设置 RVC_WEIGHTS_DIR}:/app/assets/weights:ro

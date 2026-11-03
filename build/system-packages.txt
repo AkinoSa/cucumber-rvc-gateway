@@ -1,0 +1,6 @@
+# 系统级包(Debian 13 trixie apt 安装)
+ffmpeg
+git
+build-essential
+libsndfile1
+libsndfile1-dev

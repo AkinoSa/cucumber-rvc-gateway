@@ -1,0 +1,3 @@
+# Gateway Gradio 6.31.0 隔离环境依赖
+# 安装到 /opt/gwvenv,与系统 Python 中的 RVC 推理环境完全隔离
+gradio==6.31.0

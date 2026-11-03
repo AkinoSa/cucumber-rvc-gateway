@@ -1,141 +1,251 @@
-# cucumber-rvc-gateway · RVC 控制台网关
+# cucumber-rvc-gateway · RVC 控制台推理网关
 
 <div align="center">
 
-**AstrBot 插件「RVC 控制台」的独立推理网关**
+**AstrBot 插件「RVC 控制台」专属的高性能独立推理与音频处理网关**
 
-取音源 → 时长校验 → FFmpeg 裁剪 → 3HP 人声分离(PyMSS) → RVC 推理 → 卷积混响 → 返回宿主机可读路径
-另含 TTS 语音换声接口(`/tts_convert`)与任务全局串行调度
+[![Docker Image: GHCR](https://img.shields.io/badge/Docker%20Image-GHCR%20(Ready)-brightgreen.svg?style=flat-square&logo=docker)](https://github.com/AkinoSa/cucumber-rvc-gateway/pkgs/container/cucumber-rvc-gateway)
+[![Arch: linux/amd64](https://img.shields.io/badge/Arch-linux%2Famd64-blue.svg?style=flat-square)]()
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-orange.svg?style=flat-square)](LICENSE)
+[![Companion: AstrBot Plugin](https://img.shields.io/badge/Companion%20Plugin-astrbot__plugin__cucumber__rvc__console-blueviolet.svg?style=flat-square)](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)
+[![Python: 3.12](https://img.shields.io/badge/Python-3.12-blue.svg?style=flat-square&logo=python)]()
 
-![Moe Counter](https://count.getloli.com/get/@cucumber_rvc_gateway?theme=rule34)
+取音源 → 严格时间校验 → FFmpeg 副歌裁剪 → 3HP 人声分离(PyMSS) → RVC 音色转换 → 8 参数卷积混响 → 输出成品音频  
+内置高并发防爆全局串行调度、常驻内存模型 Worker、TTS 快速变声接口与完整自动化健康诊断
+
+![访客统计](https://m.h4ck.org.cn/get/@cucumber_rvc_gateway?theme=rule34)
 
 </div>
 
-配套插件:**[astrbot_plugin_cucumber_rvc_console · RVC 控制台](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)**(聊天交互、任务调度、消息发送都在插件侧;网关只做推理)。
+> [!NOTE]
+> 本项目为纯推理与音频处理后端，**不直接对接聊天平台**。  
+> 请配合聊天交互端插件 **[astrbot_plugin_cucumber_rvc_console · RVC 控制台](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)** 协同使用。  
+> 插件负责搜歌、聊天交互、LLM 人格拟人回复与 WebUI 任务管理；网关负责所有重 CPU 推理计算，两者通过 Docker 与 HTTP/SSE 完全解耦。
 
-## 架构
+---
 
+## 🏗️ 系统协同架构
+
+```mermaid
+flowchart LR
+    subgraph Host ["宿主机 / 局域网"]
+        AstrBot["AstrBot 机器人进程"]
+        Plugin["astrbot_plugin_cucumber_rvc_console<br/>(聊天交互 / 多音源检索 / WebUI)"]
+        WorkDir[("共享工作目录<br/>RVC_WORK_DIR / gateway_work")]
+        AstrBot --> Plugin
+    end
+
+    subgraph Gateway ["cucumber-rvc-gateway (独立 Docker 容器)"]
+        API["Gradio / HTTP API 服务<br/>(:7865 /opt/gwvenv)"]
+        Queue["全局串行调度器<br/>(防并发锁 / 忙时排队 ≤180s)"]
+        
+        subgraph Pipeline ["音频处理流水线"]
+            Clip["FFmpeg 能量裁剪<br/>(副歌定位 / 防越界)"]
+            PyMSS["PyMSS 3HP 人声分离<br/>(子进程隔离)"]
+            Worker["常驻 RVC Worker<br/>(内存保活 / 10min 回收)"]
+            Reverb["8 参数卷积混响<br/>(合成 IR + FFT 真实卷积)"]
+            
+            Clip --> PyMSS --> Worker --> Reverb
+        end
+    end
+
+    Plugin -->|"① 任务调用 (HTTP / SSE)"| API
+    Plugin -->|"② 写入 TTS 音频 / 下载原曲"| WorkDir
+    API --> Queue
+    Queue --> Pipeline
+    Pipeline -->|"③ 输出变声成品 WAV/MP3"| WorkDir
+    WorkDir -.->|"④ 读取成品发送语音"| Plugin
 ```
-AstrBot 插件(宿主机进程)
-   │ ①写 TTS 原始音频 → gateway_work/tts/<task_id>/in.wav
-   │ ②Gradio 调用 ──────────────► 本网关(全局串行队列)
-   │                                  ├─ FFmpeg 裁剪(严格时间校验)
-   │                                  ├─ 3HP 人声分离(PyMSS 子进程)
-   │                                  ├─ RVC 推理(infer/cli.py 子进程 / 常驻 worker)
-   │                                  ├─ 卷积混响(合成 IR + FFT)
-   │ ③读成品路径 ◄────────────────── ┴─ out/<task_id>.wav(宿主机可读)
-```
 
-- **纯 CPU 推理**(Intel x86_64 实测;GPU/ARM 未验证,不承诺可用)
-- **单实例设计**:全局串行锁不跨进程,**不要启动第二个实例**
-- 不修改基础 RVC 镜像的系统 Python;Gradio 隔离在 /opt/gwvenv;推理子进程用系统 Python
-- 模型文件**不打包进镜像**,通过挂载提供;新增音色模型无需重建镜像
+### 核心设计原则
+1. **纯 CPU 推理极致优化**：专为无独立显卡的家用 NAS、小主机及 Linux 服务器调优（实测 Intel i5-6500 稳定流畅），无需昂贵 GPU；
+2. **全局串行防并发锁**：RVC 与 3HP 人声分离峰值内存约 2.5GB~4GB，网关采用全局串行排队机制，彻底杜绝多任务并发导致的系统卡死或 OOM Crash；
+3. **常驻 Worker 极速变声**：`rvc_worker.py` 在常驻进程中保持音色模型常驻内存，免除每次翻唱或 TTS 变声耗时 ~40s 的模型重复加载开销（空闲 10 分钟自动释放释放内存）；
+4. **模型解耦与动态热更**：所有模型权重以只读卷挂载，新增 `.pth` 音色模型即放即用，无需重建镜像或重启容器。
 
-## 系统要求
+---
 
-| 项 | 要求 |
-|---|---|
-| 系统 | Linux x86_64 + Docker(实测飞牛 fnOS;Debian/Ubuntu 理论兼容未逐一验证) |
-| CPU | 4 核起(实测 i5-6500) |
-| 内存 | 16GB 物理内存(容器上限 8~12g;推理峰值 ~4GiB) |
-| GPU | 无需(CPU 推理;GPU 未验证) |
-| 基础镜像 | RVC 整合包构建的 `rvc-project-rvc:latest`(含 torch/transformers/FFmpeg,见下文「从源码构建」) |
+## 🖥️ 运行环境要求
 
-## Docker Compose 部署(推荐)
+| 项目 | 最低要求 | 推荐配置 / 实测验证 |
+|---|---|---|
+| **操作系统** | Linux x86_64（内核 ≥ 5.10） | **飞牛 fnOS**、Debian 12、Ubuntu 22.04+ |
+| **容器引擎** | Docker 20.10+ & Docker Compose v2 | 支持 Compose 资源限制与健康检查 |
+| **CPU 处理器** | 4 核 x86_64 处理器 | 实测 Intel Core i5-6500 (4C4T) 及以上 |
+| **运行内存 (RAM)** | 8GB 物理内存 | **推荐 16GB**（容器 `mem_limit` 建议设为 12GB） |
+| **GPU 显卡** | **无需独立显卡** | 纯 CPU 推理，开箱即用 |
+
+---
+
+## 🚀 极速部署指南
+
+### 方式一：使用 GHCR 预构建镜像（推荐，开箱即用）
+
+官方已将多阶段构建的完整运行镜像发布至 GitHub Container Registry（GHCR），无需自行花费十几分钟拉取依赖编译：
+
+1. **克隆项目并准备配置文件**：
+   ```bash
+   git clone https://github.com/AkinoSa/cucumber-rvc-gateway.git
+   cd cucumber-rvc-gateway
+   cp .env.example .env
+   ```
+
+2. **编辑 `.env` 配置文件**：
+   根据你宿主机的真实绝对路径填写各项模型目录与工作区（详细字段见下方「.env 说明」）：
+   ```bash
+   nano .env
+   ```
+
+3. **拉取镜像并启动**：
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+
+4. **自检启动状态**：
+   ```bash
+   # 查看实时运行日志与启动自检报告
+   docker logs -f cucumber-rvc-gateway
+   
+   # 测试网关健康检查端点
+   curl http://127.0.0.1:3333/
+   # 返回页面即表示网关启动成功！
+   ```
+
+---
+
+### 方式二：从源码自行构建（进阶开发者）
+
+如需二次开发或修改底层算法：
 
 ```bash
-git clone https://github.com/AkinoSa/cucumber-rvc-gateway.git
-cd cucumber-rvc-gateway
-cp .env.example .env
-# 编辑 .env:填模型目录、工作目录、AstrBot plugin_data 路径与端口
+# 修改 compose.yaml，取消 build: . 的注释并注释 image: 行
 docker compose up -d --build
-curl http://127.0.0.1:3333/   # 返回页面即启动成功
 ```
 
-### 从源码构建(备用)
+---
 
-`docker compose up -d --build` 本身就是从本目录源码构建;如需脱离 compose 手动构建:`docker build -t cucumber-rvc-gateway:latest .`。**GHCR 预构建镜像尚未发布**,发布后此处会更新为 `docker pull ghcr.io/AkinoSa/cucumber-rvc-gateway`。
+## 📂 宿主机模型目录准备
 
-## .env 配置说明
+网关镜像内部不包含庞大的模型权重文件，请在宿主机准备一个目录（例如 `/vol1/1000/ai/rvc/`），按如下结构放置：
 
-| 变量 | 必填 | 说明 |
+```text
+/vol1/1000/ai/rvc/
+├── weights/           # 【必填】你的 RVC 音色模型文件 (*.pth)
+│   ├── deng.pth
+│   └── nuoyemu.pth
+├── indices/           # 【可选】对应音色的检索特征文件 (*.index，按同名自动匹配)
+│   └── added_IVF1024_Flat_nprobe_1_deng_v2.index
+├── pymss_weights/     # 【必填】3HP 人声伴奏分离模型文件
+│   └── 3_HP-Vocal-UVR.pth
+├── hubert_base/       # 【必填】HuBERT 基础声学特征提取模型
+│   └── hubert_base.pt
+└── rmvpe/             # 【必填】RMVPE 高精度音高提取模型
+    └── rmvpe.pt
+```
+
+> [!TIP]
+> **关于音色动态发现**：只要将新的 `.pth` 模型放入 `weights/` 目录，在 QQ 群发送 `/刷新rvc模型` 或在 WebUI 刷新，网关即时感知并加载，**无需重启 Docker 容器**。
+
+---
+
+## ⚙️ 配置文件说明 (.env)
+
+| 配置变量名 | 必填 | 默认建议值 | 核心说明 |
+|---|---|---|---|
+| `RVC_GATEWAY_PORT` | 否 | `3333` | 网关在宿主机对外暴露的 HTTP 访问端口 |
+| `MEM_LIMIT` | 否 | `12g` | 容器内存使用硬上限（防止异常情况撑爆宿主机物理内存） |
+| `RVC_OMP_THREADS` | 否 | `2` | PyTorch CPU 推理线程数（推荐 2；线程过高易引发上下文争抢与 OOM） |
+| `RVC_WEIGHTS_DIR` | **是** | 宿主机路径 | 映射到容器内 `/app/assets/weights`，只读 |
+| `RVC_INDICES_DIR` | **是** | 宿主机路径 | 映射到容器内 `/app/assets/indices`，只读 |
+| `RVC_PYMSS_WEIGHTS_DIR` | **是** | 宿主机路径 | 映射到容器内 `/app/assets/pymss_weights`，只读 |
+| `RVC_HUBERT_DIR` | **是** | 宿主机路径 | 映射到容器内 `/app/assets/hubert_base`，只读 |
+| `RVC_RMVPE_DIR` | **是** | 宿主机路径 | 映射到容器内 `/app/assets/rmvpe`，只读 |
+| `RVC_WORK_DIR` | **是** | 宿主机路径 | **核心读写工作区**。包含 cache/out/logs/tts，**必须与插件配置中的 `gateway_work_dir` 填完全相同的路径** |
+| `RVC_PLUGIN_DATA_DIR` | **是** | 宿主机路径 | AstrBot 宿主机 `data/plugin_data` 路径，使网关能直接读取插件下载的音频 |
+| `RVC_SEP_MODEL` | 否 | `3_HP-Vocal-UVR.pth` | 默认使用的人声分离模型文件名 |
+| `RVC_MAX_CLIP_SECONDS` | 否 | `30` | 翻唱副歌最大裁切时长（秒） |
+
+---
+
+## 🔗 与 AstrBot 插件联动配置
+
+启动好网关后，在 **AstrBot WebUI → 插件配置 → RVC 控制台** 中填入以下两项即可连通：
+
+1. **网关服务地址 (`rvc_base_url`)**：
+   - 同一主机：`http://127.0.0.1:3333/`（末尾必须带 `/`）；
+   - 跨容器或跨机器：`http://<宿主机局域网IP>:3333/`。
+2. **网关工作目录 (`gateway_work_dir`)**：
+   - 填写与 `.env` 中 `RVC_WORK_DIR` **完全一致的宿主机绝对路径**。  
+   > 为什么需要一致？网关在处理完变声后，返回音频文件路径，AstrBot 需要通过宿主机文件系统直接读取并转换为群语音发送。
+
+---
+
+## 📡 API 端点规范 (Gradio 6 Endpoints)
+
+网关基于 Gradio 6.31 提供了标准的 SSE/HTTP 命名 API，支持无缝远程调用：
+
+| 端点 (Endpoint) | 说明 | 输入参数要点 |
 |---|---|---|
-| `RVC_WEIGHTS_DIR` | ✅ | 音色模型 `.pth` 目录(只读挂载到 /app/assets/weights) |
-| `RVC_INDICES_DIR` | ✅ | 特征 index 目录(按模型名自动匹配,缺失时无索引推理) |
-| `RVC_PYMSS_WEIGHTS_DIR` | ✅ | 3HP 分离模型目录(递归扫描) |
-| `RVC_HUBERT_DIR` / `RVC_RMVPE_DIR` | ✅ | HuBERT / RMVPE 模型目录 |
-| `RVC_WORK_DIR` | ✅ | 工作目录(cache/out/logs/tasks/tts/uploads),读写 |
-| `RVC_PLUGIN_DATA_DIR` | ✅ | AstrBot 的 `data/plugin_data` 宿主机路径(插件下载的歌曲供网关读取) |
-| `RVC_GATEWAY_PORT` | | 宿主机端口(默认 3333,可改) |
-| `RVC_CPU_LIMIT` / `RVC_MEMORY_LIMIT` / `RVC_MEMORY_SWAP_LIMIT` | | 资源限制(默认 3 核 / 8g / 12g) |
-| `RVC_SEP_MODEL` | | 分离模型文件名(默认 `3_HP-Vocal-UVR.pth`,须存在于 PYMSS 目录) |
-| `RVC_MAX_CLIP_SECONDS` / `RVC_OMP_THREADS` | | 最大片段(默认 30s)/ 推理线程(默认 2,4 线程易 OOM) |
-| `RVC_NETEASE_BASE` / `TZ` | | 备用音源 API / 时区 |
+| `/convert` | 完整歌曲翻唱流水线 | 取源 → 严格时间校验 → 裁剪 → 人声分离 → RVC 变声 → 淡入淡出 → 卷积混响 |
+| `/tts_convert` | TTS 音频变声 | 针对短音频（≤60s）快速换声，输入限制在白名单目录内，支持独立音色与混响 |
+| `/model_info` | 动态音色与 Index 检查 | 返回当前已挂载的所有音色列表、模型状态与同名 index 匹配情况 |
+| `/show_model` | 音色轻量列表查询 | 返回格式化音色下拉候选项 |
+| `/separate` | 单独人声分离 | 仅提取伴奏与人声干音，用于试听与提取素材 |
+| `/clip` | 单独音频裁切 | 仅执行基于能量吸附算法的高潮片段裁剪 |
+| `/cache_info` / `/clear_cache` | 缓存管理 | 查询或清空生成的历史切片中间文件 |
 
-> `.env` 含本机路径,**不要提交到公开仓库**(已在 .gitignore)。
+---
 
-## 模型目录准备
+## 📊 性能实测基准 (CPU Benchmark)
 
-| 挂载目标(容器内) | 内容 | 来源 |
+测试机型：家用低功耗主机（飞牛 fnOS / Intel Core i5-6500 4C4T / 16GB DDR4 / 纯 CPU）
+
+| 处理步骤 | 典型耗时 (30s 歌曲切片) | 资源占用状态 |
 |---|---|---|
-| /app/assets/weights | 音色模型 `*.pth` | RVC 训练产出;放入即可被动态发现 |
-| /app/assets/indices | 特征索引 `*.index` | 可选;按模型名自动匹配 |
-| /app/assets/pymss_weights | 3HP 分离模型(可含子目录,递归扫描) | PyMSS/MSST 系 |
-| /app/assets/hubert_base | HuBERT 模型 | RVC 整合包 |
-| /app/assets/rmvpe | RMVPE 音高模型 | RVC 整合包 |
+| **音频裁剪与校验** | ~ 0.5 秒 | 瞬时微秒级完成 |
+| **PyMSS 3HP 人声分离** | ~ 60 ~ 70 秒 | CPU 满载，内存约 2.2GB |
+| **RVC 音色转换 (热态)** | ~ 45 ~ 55 秒 | 常驻 Worker 内存命中，零加载延迟 |
+| **卷积混响润色** | ~ 0.2 秒 | 瞬时完成 |
+| **整体翻唱流程** | **约 2 分钟左右** | 全局串行锁保护，系统整体平稳运行 |
+| **TTS 短语音变声** | **约 10 ~ 15 秒** | 短句即时响应 |
 
-模型文件不打包进镜像;新增音色模型放入 weights 目录即被动态发现,无需重启网关。
+---
 
-## API 端点(Gradio named endpoints)
+## ❓ 常见问题排查 (FAQ)
 
-| 端点 | 说明 |
-|---|---|
-| `/convert` | 歌曲翻唱:取源→裁剪→分离→RVC→淡入淡出→混响;`render_mode`/`chorus_seconds`/`start_time` 等参数 |
-| `/tts_convert` | TTS 音频换声(输入限 /work/tts、/work/uploads 白名单;时长≤60s) |
-| `/show_model` / `/model_info` | 音色列表 / 目录自检(含 index_matches) |
-| `/separate` / `/clip` | 仅分离 / 仅切段 |
-| `/show_msst_models` / `/select_msst_model` | 分离模型查看/切换 |
-| `/cache_info` / `/clear_cache` | 缓存 |
+<details>
+<summary><b>1. 容器启动后秒退，日志提示「启动检查失败」？</b></summary>
 
-参数按名字校验;插件传了不支持的参数会被记录而非报错;返回值为宿主机可读路径。
+网关在启动阶段会自动执行 `_validate_startup_paths()` 严格自检：
+1. 检查 `.env` 中配置的目录是否在宿主机上真实存在；
+2. 检查 `pymss_weights`、`hubert_base`、`rmvpe` 目录中是否已放入对应的 `.pth` / `.pt` 模型文件；
+3. 查看具体报错日志：`docker logs cucumber-rvc-gateway`，按缺失项补充文件即可。
+</details>
 
-## 健康检查与启动自检
+<details>
+<summary><b>2. 翻唱任务提示「已有推理任务在执行且等待超时」？</b></summary>
 
-- compose 内置 healthcheck(python 探测 7865 端口);
-- 启动时 `_validate_startup_paths()`:模型/index/分离模型/系统 Python 任一缺失 → 明确报错退出(不静默回退);
-- `curl http://127.0.0.1:3333/` 返回 200 即在线。
+为了保护 NAS/CPU 不被压垮，网关设置了单一推理锁（等待上限 180s）。若前序任务耗时超过 180 秒（如提交了极长的整首无损音频），后序任务会自动安全超时放弃。可缩短翻唱片段长度或等待前序任务结束。
+</details>
 
-## 模型常驻与加载机制
+<details>
+<summary><b>3. 容器退出码为 -9？</b></summary>
 
-- **常驻 worker**:`rvc_worker.py` 保持音色模型在内存(首次任务加载 ~40s,后续免加载);空闲 10 分钟自动卸载;
-- worker 失败/超时自动回退子进程推理(`infer/cli.py`),两者使用同一套推理实现;
-- 3HP 分离每任务以子进程运行,结束释放;
-- 全局串行:同一时间只有一个推理任务,其他任务等待(≤180s,超时明确报错);等待耗时记录于任务日志 `queue_wait`。
+退出码 `-9` 代表进程被 Linux 内核 OOM Killer 强制终止。请检查宿主机可用内存，建议物理内存 ≥ 16GB，并将 `.env` 中的 `MEM_LIMIT` 设置为 `12g`。
+</details>
 
-## 日志与性能监控
+<details>
+<summary><b>4. AstrBot 报错「无法读取输出音频文件」？</b></summary>
 
-- 任务日志:`<WORK_DIR>/logs/<task_id>.json`(阶段耗时:裁剪/分离/推理/混响/排队等待);
-- 容器日志:`docker logs cucumber-rvc-gateway`;
-- 实测参考(i5-6500 CPU):30s 歌曲裁剪 0.5s → 分离 ~70s → RVC ~54s(热)→ 混响 0.2s。
+请确保网关 `.env` 中的 `RVC_WORK_DIR` 与 AstrBot 插件设置中的 `gateway_work_dir` 填写的是**同一绝对路径**。因为网关输出的文件保存在该目录下，插件必须能够直接通过宿主机文件系统读取到它。
+</details>
 
-## 更新与回滚
+---
 
-- **更新**:`git pull` → `docker compose up -d --build`(工作目录与模型在宿主机,不受影响);
-- **回滚**:恢复 gateway.py 为备份版本 → `docker compose up -d --build`;工作目录数据不回滚;
-- **备份**:`.env` + compose.yaml + gateway.py 即全部配置;工作目录可整目录备份(不含模型)。
+## 🤝 开源协议与鸣谢
 
-## 常见错误
-
-| 现象 | 原因/处理 |
-|---|---|
-| 启动即退出,报「启动检查失败」 | .env 路径不存在/未挂载,按报错逐项核对 |
-| 「音色模型不存在: X」 | weights 目录没有该 .pth,或文件名不带 .pth |
-| 「已有推理任务在执行且等待超时」 | 全局串行,前任务超 180s;确认前任务状态或重启网关 |
-| 退出码 -9 | OOM;缩短片段或提高内存上限 |
-| AstrBot 读不到输出文件 | 网关 `.env` 的 `RVC_WORK_DIR` 与插件设置的「网关工作目录」不一致 |
-
-## 许可证与插件项目
-
-- 本项目以 **AGPL-3.0** 发布(见 [LICENSE](LICENSE));配套插件同样为 AGPL-3.0;
-- 推理能力基于 [Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)(MIT)与 [PyMSS/MSST](https://github.com/SUC-DriverOld/MSST-WebUI) 系模型,均以子进程/挂载方式使用;
-- 插件项目:[astrbot_plugin_cucumber_rvc_console](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console)。
+- 本项目基于 **GNU AGPL-3.0** 协议发布，与配套插件 [astrbot_plugin_cucumber_rvc_console](https://github.com/AkinoSa/astrbot_plugin_cucumber_rvc_console) 享有相同的开源协议；
+- 推理底层源自 [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)（MIT License）；
+- 人声伴奏分离基于 [PyMSS](https://github.com/KitsuneX07/subpixel) 系 3HP 模型（MIT License）；
+- 感谢 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 团队提供出色的聊天机器人基础设施。

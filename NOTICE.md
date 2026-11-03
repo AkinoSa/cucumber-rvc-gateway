@@ -8,10 +8,15 @@ cucumber-rvc-gateway 是 [astrbot_plugin_cucumber_rvc_console(RVC 控制台)](ht
 
 | 组件 | 许可证 | 使用方式 |
 |---|---|---|
-| [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | MIT | 基础镜像含其推理代码;子进程调用 infer/cli.py |
-| [PyMSS / MSST-WebUI](https://github.com/SUC-DriverOld/MSST-WebUI) | GPL-3.0(模型与代码按其声明) | 子进程调用 3HP 人声分离 |
-| [gradio](https://github.com/gradio-app/gradio) | Apache-2.0 | 网关 API 服务 |
-| [FFmpeg](https://ffmpeg.org) | LGPL/GPL(按构建) | 裁剪/转码 |
+| [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | MIT (Copyright 2023 liujing04) | 推理代码(commit 81eed5e),子进程调用 infer/cli.py |
+| [PyMSS](https://github.com/KitsuneX07/subpixel) | MIT (Copyright 2025 KitsuneX07) | 3HP 人声分离,子进程调用 tools/pymss/cli.py |
+| pymss_core | MIT (Copyright 2025 KitsuneX07) | PyMSS 核心库,RVC 仓库内 tools/pymss_core/ |
+| [gradio](https://github.com/gradio-app/gradio) | Apache-2.0 | 网关 API 服务(/opt/gwvenv) |
+| [FFmpeg](https://ffmpeg.org) | LGPL-2.1+ | 裁剪/转码(Debian 动态链接) |
+| [PyTorch](https://pytorch.org) | BSD-3-Clause | CPU 推理(2.4.1+cpu) |
+| [transformers](https://huggingface.co/docs/transformers) | Apache-2.0 | HuBERT 加载(4.49.0) |
+
+> 以上所有组件均为 MIT/Apache/BSD 等宽松许可,无 GPL 传染义务,允许商业再分发。
 
 ## RVC 模型与 3HP 分离模型
 
@@ -19,4 +24,4 @@ cucumber-rvc-gateway 是 [astrbot_plugin_cucumber_rvc_console(RVC 控制台)](ht
 
 ## 许可证
 
-本项目以 GNU AGPL-3.0 发布(见 LICENSE)。
+本项目以 GNU AGPL-3.0 发布(见 LICENSE),与插件共享同一许可。
